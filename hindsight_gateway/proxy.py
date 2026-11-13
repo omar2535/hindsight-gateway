@@ -1,0 +1,124 @@
+"""The proxy agents talk to: checks the key, then forwards to Hindsight."""
+
+import http.client
+import json
+import re
+import sys
+import urllib.parse
+from http.server import BaseHTTPRequestHandler
+
+from .policy import HEALTH, allowed
+
+HOP_BY_HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te",
+              "trailer", "transfer-encoding", "upgrade", "host", "authorization", "content-length",
+              "expect"}
+
+
+def make_handler(store, upstream: str, max_body: int = 64 * 1024 * 1024, timeout: float = 600):
+    up = urllib.parse.urlsplit(upstream)
+
+    class ProxyHandler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+        timeout = 900  # idle keep-alive connections don't hold a thread forever
+        server_version = "hindsight-gateway"
+        sys_version = ""
+
+        def _reply(self, code: int, detail: str):
+            body = json.dumps({"detail": detail}).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _read_body(self) -> bytes | None:
+            if (self.headers.get("Transfer-Encoding") or "").lower() == "chunked":
+                out = bytearray()
+                while True:
+                    size = int(self.rfile.readline().split(b";")[0].strip() or b"0", 16)
+                    if size == 0:
+                        while self.rfile.readline() not in (b"\r\n", b"\n", b""):
+                            pass
+                        return bytes(out)
+                    out += self.rfile.read(size)
+                    self.rfile.readline()
+                    if len(out) > max_body:
+                        return None
+            length = int(self.headers.get("Content-Length") or 0)
+            if length > max_body:
+                return None
+            return self.rfile.read(length) if length else b""
+
+        def _handle(self):
+            path, _, _query = self.path.partition("?")
+            if path in HEALTH and self.command == "GET" and not self.headers.get("Authorization"):
+                pass  # probes and plain health checks, no key needed
+            else:
+                auth = self.headers.get("Authorization") or ""
+                key = auth[7:].strip() if auth[:7].lower() == "bearer " else ""
+                found = store.lookup(key)
+                if not found:
+                    self.close_connection = True
+                    return self._reply(401, "Hindsight gateway: missing, unknown or disabled API key")
+                name, bank = found
+                if not allowed(self.command, path, bank):
+                    self.log_message("denied %s %s (key %s, bank %s)", self.command, path, name, bank)
+                    self.close_connection = True
+                    return self._reply(403, "Hindsight gateway: not allowed for this key")
+
+            body = self._read_body()
+            if body is None:
+                self.close_connection = True
+                return self._reply(413, "Hindsight gateway: request body too large")
+
+            headers = {k: v for k, v in self.headers.items() if k.lower() not in HOP_BY_HOP}
+            headers["Host"] = up.netloc
+            if body or self.command in ("POST", "PUT", "PATCH"):
+                headers["Content-Length"] = str(len(body))
+            conn = http.client.HTTPConnection(up.hostname, up.port or 80, timeout=timeout)
+            try:
+                conn.request(self.command, self.path, body=body or None, headers=headers)
+                resp = conn.getresponse()
+                self.send_response(resp.status, resp.reason)
+                length = resp.getheader("Content-Length")
+                for k, v in resp.getheaders():
+                    if k.lower() not in HOP_BY_HOP:
+                        self.send_header(k, v)
+                no_body = self.command == "HEAD" or resp.status in (204, 304) or 100 <= resp.status < 200
+                if no_body:
+                    self.send_header("Content-Length", length or "0")
+                    self.end_headers()
+                    return
+                if length is not None:
+                    self.send_header("Content-Length", length)
+                    self.end_headers()
+                    while chunk := resp.read(65536):
+                        self.wfile.write(chunk)
+                else:
+                    # Stream through (e.g. server-sent events) re-chunked.
+                    self.send_header("Transfer-Encoding", "chunked")
+                    self.end_headers()
+                    while chunk := resp.read1(65536):
+                        self.wfile.write(b"%x\r\n%s\r\n" % (len(chunk), chunk))
+                        self.wfile.flush()
+                    self.wfile.write(b"0\r\n\r\n")
+            except (OSError, http.client.HTTPException) as e:
+                self.close_connection = True
+                try:
+                    self._reply(502, f"Hindsight gateway: upstream error ({type(e).__name__})")
+                except OSError:
+                    pass
+            finally:
+                conn.close()
+
+        do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = _handle
+
+        def do_OPTIONS(self):
+            self._reply(405, "Hindsight gateway: method not allowed")
+
+        def log_message(self, fmt, *args):
+            # Method, path (no query string: it can hold memory text) and status; never headers.
+            msg = re.sub(r'"(\w+) ([^ ?"]*)\?[^ "]*', r'"\1 \2?…', fmt % args)
+            sys.stderr.write(f"proxy {self.address_string()} {msg}\n")
+
+    return ProxyHandler

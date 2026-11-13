@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: unittest
+        run: PYTHONPATH=. python -m unittest discover -s tests -t tests -v
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build (not pushed)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: hindsight-gateway:ci
+      - name: Starts, answers health checks, refuses keyless requests
+        run: |
+          docker run -d --name gw -p 8889:8889 -p 8890:8890 \
+            -e HGW_UPSTREAM=http://127.0.0.1:9 -e HGW_ADMIN_PASSWORD=ci hindsight-gateway:ci
+          for i in $(seq 1 20); do curl -fsS http://127.0.0.1:8890/healthz && break; sleep 1; done
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8889/v1/default/banks)" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8890/)" = 303
+          docker logs gw
+          test "$(docker exec gw id -u)" = 10001
