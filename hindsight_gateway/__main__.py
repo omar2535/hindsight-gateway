@@ -8,6 +8,9 @@ Configuration (environment):
   HGW_ADMIN_PASSWORD      admin password; the UI refuses logins without one
   HGW_DB                  SQLite file, default /data/gateway.db
   HGW_COOKIE_SECURE       "false" to allow the admin session over plain HTTP (local testing)
+  HGW_API_PREFIX          e.g. /api: the API also answers under this path (for one hostname
+                          that serves both); bare paths keep working
+  HGW_ADMIN_PREFIX        e.g. /ui: where the admin UI lives; its links and cookie use it
   HGW_MAX_BODY            largest request body in bytes, default 64 MiB
   HGW_UPSTREAM_TIMEOUT    seconds, default 600
   HGW_SEED_<n>_NAME / HGW_SEED_<n>_BANK / HGW_SEED_<n>_KEY
@@ -69,7 +72,8 @@ def main() -> int:
 
     max_body = int(env.get("HGW_MAX_BODY", str(64 * 1024 * 1024)))
     timeout = float(env.get("HGW_UPSTREAM_TIMEOUT", "600"))
-    p = Server(addr(env.get("HGW_LISTEN", "0.0.0.0:8889")), proxy.make_handler(store, upstream, max_body, timeout))
+    p = Server(addr(env.get("HGW_LISTEN", "0.0.0.0:8889")),
+               proxy.make_handler(store, upstream, max_body, timeout, prefix=env.get("HGW_API_PREFIX", "")))
     serve(p)
     keys = store.keys()
     print(f"hindsight-gateway {__version__}: {len(keys)} key(s), proxy :{p.server_port} -> {upstream}", flush=True)
@@ -78,7 +82,8 @@ def main() -> int:
     if admin_listen:
         password = env.get("HGW_ADMIN_PASSWORD", "")
         a = Server(addr(admin_listen), admin.make_handler(
-            store, password, upstream, secure_cookies=env.get("HGW_COOKIE_SECURE", "true").lower() != "false"))
+            store, password, upstream, secure_cookies=env.get("HGW_COOKIE_SECURE", "true").lower() != "false",
+            prefix=env.get("HGW_ADMIN_PREFIX", "")))
         serve(a)
         print(f"hindsight-gateway: admin UI :{a.server_port}" + ("" if password else " (no HGW_ADMIN_PASSWORD: logins refused)"),
               flush=True)

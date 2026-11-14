@@ -22,6 +22,7 @@ from importlib import resources
 
 from . import __version__
 from .policy import BANK_ID
+from .proxy import strip_prefix
 
 SESSION_COOKIE = "hgw_session"
 SESSION_TTL = 12 * 3600
@@ -88,7 +89,10 @@ def list_upstream_banks(upstream: str) -> list[str]:
         return []
 
 
-def make_handler(store, password: str, upstream: str, secure_cookies: bool = True):
+def make_handler(store, password: str, upstream: str, secure_cookies: bool = True, prefix: str = ""):
+    """`prefix` (e.g. "/ui") is where the UI lives on a shared hostname: links, redirects and
+    the cookie path carry it, and incoming paths may come with or without it."""
+    prefix = prefix.rstrip("/")
     pw_digest = hashlib.sha256(password.encode()).digest() if password else None
     signing_key = store.secret("session-signing-key")
     throttle = Throttle()
@@ -145,13 +149,13 @@ def make_handler(store, password: str, upstream: str, secure_cookies: bool = Tru
                 self.wfile.write(body)
 
         def redirect(self, to: str, cookie: str | None = None):
-            headers = {"Location": to}
+            headers = {"Location": prefix + to}
             if cookie is not None:
                 headers["Set-Cookie"] = cookie
             self.send(303, b"", headers=headers)
 
         def cookie(self, value: str, max_age: int) -> str:
-            flags = f"Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}"
+            flags = f"Path={prefix or ''}/; HttpOnly; SameSite=Strict; Max-Age={max_age}"
             return f"{SESSION_COOKIE}={value}; {flags}" + ("; Secure" if secure_cookies else "")
 
         def form(self) -> dict[str, str]:
@@ -173,6 +177,10 @@ def make_handler(store, password: str, upstream: str, secure_cookies: bool = Tru
 <body><header><a href="/" class="brand">Hindsight gateway</a>{nav}</header>
 <main>{body}</main>
 <footer>hindsight-gateway {esc(__version__)}</footer></body></html>"""
+            if prefix:
+                # Every link and form in the UI is root-relative ("/keys/1"): put them under
+                # the prefix. User data never starts an href/action, it's only ever text.
+                doc = re.sub(r'''(\s(?:href|action)=["'])/''', rf"\g<1>{prefix}/", doc)
             self.send(code, doc.encode())
 
         def log_message(self, fmt, *args):
@@ -181,7 +189,7 @@ def make_handler(store, password: str, upstream: str, secure_cookies: bool = Tru
         # -- routing ------------------------------------------------------------------
 
         def do_GET(self):
-            path = urllib.parse.urlsplit(self.path).path
+            path = strip_prefix(urllib.parse.urlsplit(self.path).path, prefix)
             if path == "/healthz":
                 return self.send(200, b"ok", "text/plain")
             if path == "/static/style.css":
@@ -204,7 +212,7 @@ def make_handler(store, password: str, upstream: str, secure_cookies: bool = Tru
         do_HEAD = do_GET
 
         def do_POST(self):
-            path = urllib.parse.urlsplit(self.path).path
+            path = strip_prefix(urllib.parse.urlsplit(self.path).path, prefix)
             data = self.form()
             if path == "/login":
                 return self.login(data)

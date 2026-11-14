@@ -4,6 +4,9 @@ Each release's section here is also its GitHub Release notes.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-13
+
+- One hostname for both: `HGW_API_PREFIX` (e.g. `/api`) and `HGW_ADMIN_PREFIX` (e.g. `/ui`). The API also answers under its prefix and forwards to Hindsight without it; bare paths keep working. The UI's links, redirects and session cookie live under its prefix.
 - Clients that hang up mid-request (a closed port-forward, say) no longer leave a traceback in the log.
 
 ## [0.1.0] - 2026-11-13
@@ -15,5 +18,6 @@ First release, moved out of [Hermify](https://github.com/omar2535/Hermify) (wher
 - An admin UI to create, rename, move, disable, rotate and delete keys, with an activity log.
 - A container image for amd64 and arm64.
 
-[Unreleased]: https://github.com/omar2535/hindsight-gateway/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/omar2535/hindsight-gateway/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/omar2535/hindsight-gateway/releases/tag/v0.2.0
 [0.1.0]: https://github.com/omar2535/hindsight-gateway/releases/tag/v0.1.0

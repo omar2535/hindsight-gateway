@@ -21,10 +21,12 @@ Standard library Python, no dependencies.
 docker run -d -p 8889:8889 -p 8890:8890 -v hgw-data:/data \
   -e HGW_UPSTREAM=http://hindsight:8888 \
   -e HGW_ADMIN_PASSWORD='something long' \
-  ghcr.io/omar2535/hindsight-gateway:0.1.0
+  ghcr.io/omar2535/hindsight-gateway:0.2.0
 ```
 
-Then open `http://<host>:8890`, log in, and create a key for each agent. Point the agent at `http://<host>:8889` with that key. In Hermes Agent's Hindsight plugin that's `local_external` mode with the URL and API key.
+Then open `http://<host>:8890`, log in, and create a key for each agent.
+
+To put both on one hostname behind a reverse proxy, set `HGW_API_PREFIX=/api` and `HGW_ADMIN_PREFIX=/ui`, then route `/api` to port 8889 and `/ui` to port 8890 (no path rewriting needed). Agents then use `https://<host>/api`. Point the agent at `http://<host>:8889` with that key. In Hermes Agent's Hindsight plugin that's `local_external` mode with the URL and API key.
 
 Make sure nothing but the gateway can reach Hindsight's own port. In Kubernetes, use a NetworkPolicy that only lets the gateway's pod in (Hermify sets this up for you).
 
@@ -37,6 +39,8 @@ Make sure nothing but the gateway can reach Hindsight's own port. In Kubernetes,
 | `HGW_LISTEN` | `0.0.0.0:8889` | The API |
 | `HGW_ADMIN_LISTEN` | `0.0.0.0:8890` | The admin UI; empty turns it off |
 | `HGW_DB` | `/data/gateway.db` | The SQLite file |
+| `HGW_API_PREFIX` | empty | e.g. `/api`: serve the API under this path too, so one hostname can carry both. Bare paths keep working. |
+| `HGW_ADMIN_PREFIX` | empty | e.g. `/ui`: where the admin UI lives on that hostname |
 | `HGW_COOKIE_SECURE` | `true` | Set `false` only to use the UI over plain HTTP, e.g. through `kubectl port-forward` |
 | `HGW_MAX_BODY` | 64 MiB | Largest request body |
 | `HGW_UPSTREAM_TIMEOUT` | `600` | Seconds |

@@ -14,8 +14,17 @@ HOP_BY_HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authoriza
               "expect"}
 
 
-def make_handler(store, upstream: str, max_body: int = 64 * 1024 * 1024, timeout: float = 600):
+def strip_prefix(path: str, prefix: str) -> str:
+    """'/api/v1/x' -> '/v1/x' for prefix '/api'. Paths without the prefix are left alone,
+    so in-cluster clients can keep calling the bare paths."""
+    if prefix and (path == prefix or path.startswith(prefix + "/")):
+        return path[len(prefix):] or "/"
+    return path
+
+
+def make_handler(store, upstream: str, max_body: int = 64 * 1024 * 1024, timeout: float = 600, prefix: str = ""):
     up = urllib.parse.urlsplit(upstream)
+    prefix = prefix.rstrip("/")
 
     class ProxyHandler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -50,7 +59,9 @@ def make_handler(store, upstream: str, max_body: int = 64 * 1024 * 1024, timeout
             return self.rfile.read(length) if length else b""
 
         def _handle(self):
-            path, _, _query = self.path.partition("?")
+            raw_path, sep, query = self.path.partition("?")
+            path = strip_prefix(raw_path, prefix)
+            target = path + sep + query  # what Hindsight sees: never the prefix
             if path in HEALTH and self.command == "GET" and not self.headers.get("Authorization"):
                 pass  # probes and plain health checks, no key needed
             else:
@@ -77,7 +88,7 @@ def make_handler(store, upstream: str, max_body: int = 64 * 1024 * 1024, timeout
                 headers["Content-Length"] = str(len(body))
             conn = http.client.HTTPConnection(up.hostname, up.port or 80, timeout=timeout)
             try:
-                conn.request(self.command, self.path, body=body or None, headers=headers)
+                conn.request(self.command, target, body=body or None, headers=headers)
                 resp = conn.getresponse()
                 self.send_response(resp.status, resp.reason)
                 length = resp.getheader("Content-Length")
