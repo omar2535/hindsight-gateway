@@ -6,6 +6,11 @@ Hindsight's API has no authentication of its own: anything that can reach it can
 
 I wrote it for [Hermify](https://github.com/omar2535/Hermify), where several people's agents share one Hindsight, but it works in front of any Hindsight.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.png">
+  <img alt="The admin UI: a list of keys with their bank, source, last use and status, a form to create a key, and recent activity" src="docs/screenshot-light.png">
+</picture>
+
 ## How it works
 
 - **Port 8889: the API.** Agents use it exactly like Hindsight's API, with `Authorization: Bearer <key>`. The gateway checks the key and the path, then forwards the request.
