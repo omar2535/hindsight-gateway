@@ -4,6 +4,8 @@ Each release's section here is also its GitHub Release notes.
 
 ## [Unreleased]
 
+- Clients that hang up mid-request (a closed port-forward, say) no longer leave a traceback in the log.
+
 ## [0.1.0] - 2026-11-13
 
 First release, moved out of [Hermify](https://github.com/omar2535/Hermify) (where it was a single script) into its own project.

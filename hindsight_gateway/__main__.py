@@ -40,6 +40,17 @@ def seeds_from_env(env) -> list[tuple[str, str, str]]:
     return out
 
 
+class Server(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        # A client hanging up mid-request (a closed port-forward, a killed agent) is normal:
+        # don't fill the log with tracebacks for it.
+        if isinstance(sys.exc_info()[1], (ConnectionResetError, BrokenPipeError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def serve(server):
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
@@ -58,9 +69,7 @@ def main() -> int:
 
     max_body = int(env.get("HGW_MAX_BODY", str(64 * 1024 * 1024)))
     timeout = float(env.get("HGW_UPSTREAM_TIMEOUT", "600"))
-    p = ThreadingHTTPServer(addr(env.get("HGW_LISTEN", "0.0.0.0:8889")),
-                            proxy.make_handler(store, upstream, max_body, timeout))
-    p.daemon_threads = True
+    p = Server(addr(env.get("HGW_LISTEN", "0.0.0.0:8889")), proxy.make_handler(store, upstream, max_body, timeout))
     serve(p)
     keys = store.keys()
     print(f"hindsight-gateway {__version__}: {len(keys)} key(s), proxy :{p.server_port} -> {upstream}", flush=True)
@@ -68,9 +77,8 @@ def main() -> int:
     admin_listen = env.get("HGW_ADMIN_LISTEN", "0.0.0.0:8890")
     if admin_listen:
         password = env.get("HGW_ADMIN_PASSWORD", "")
-        a = ThreadingHTTPServer(addr(admin_listen), admin.make_handler(
+        a = Server(addr(admin_listen), admin.make_handler(
             store, password, upstream, secure_cookies=env.get("HGW_COOKIE_SECURE", "true").lower() != "false"))
-        a.daemon_threads = True
         serve(a)
         print(f"hindsight-gateway: admin UI :{a.server_port}" + ("" if password else " (no HGW_ADMIN_PASSWORD: logins refused)"),
               flush=True)
