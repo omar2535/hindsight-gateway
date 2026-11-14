@@ -24,9 +24,9 @@ docker run -d -p 8889:8889 -p 8890:8890 -v hgw-data:/data \
   ghcr.io/omar2535/hindsight-gateway:0.2.0
 ```
 
-Then open `http://<host>:8890`, log in, and create a key for each agent.
+Then open `http://<host>:8890`, log in, and create a key for each agent. Point the agent at `http://<host>:8889` with that key. In Hermes Agent's Hindsight plugin that's `local_external` mode with the URL and API key.
 
-To put both on one hostname behind a reverse proxy, set `HGW_API_PREFIX=/api` and `HGW_ADMIN_PREFIX=/ui`, then route `/api` to port 8889 and `/ui` to port 8890 (no path rewriting needed). Agents then use `https://<host>/api`. Point the agent at `http://<host>:8889` with that key. In Hermes Agent's Hindsight plugin that's `local_external` mode with the URL and API key.
+To put both on one hostname behind a reverse proxy, set `HGW_API_PREFIX=/api` and `HGW_ADMIN_PREFIX=/ui`, then route `/api` to port 8889 and `/ui` to port 8890 (no path rewriting needed). Agents then use `https://<host>/api`, and the UI is at `https://<host>/ui/`.
 
 Make sure nothing but the gateway can reach Hindsight's own port. In Kubernetes, use a NetworkPolicy that only lets the gateway's pod in (Hermify sets this up for you).
 
