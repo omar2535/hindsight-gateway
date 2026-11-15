@@ -29,11 +29,34 @@ docker run -d -p 8889:8889 -p 8890:8890 -v hgw-data:/data \
   ghcr.io/omar2535/hindsight-gateway:0.2.0
 ```
 
-Then open `http://<host>:8890`, log in, and create a key for each agent. Point the agent at `http://<host>:8889` with that key. In Hermes Agent's Hindsight plugin that's `local_external` mode with the URL and API key.
+Then open `http://<host>:8890`, log in, and create a key for each agent. Point the agent at `http://<host>:8889` with that key (for Hermes Agent, see below).
 
 To put both on one hostname behind a reverse proxy, set `HGW_API_PREFIX=/api` and `HGW_ADMIN_PREFIX=/ui`, then route `/api` to port 8889 and `/ui` to port 8890 (no path rewriting needed). Agents then use `https://<host>/api`, and the UI is at `https://<host>/ui/`.
 
 Make sure nothing but the gateway can reach Hindsight's own port. In Kubernetes, use a NetworkPolicy that only lets the gateway's pod in (Hermify sets this up for you).
+
+## Use it with Hermes Agent
+
+Create a key in the UI first. Then, on the machine running Hermes:
+
+```sh
+hermes plugins install hindsight --enable
+hermes config set memory.provider hindsight
+cat >> ~/.hermes/.env <<'EOF'
+HINDSIGHT_MODE=local_external
+HINDSIGHT_API_URL=http://<host>:8889
+HINDSIGHT_API_KEY=<the key>
+HINDSIGHT_BANK_ID=<the key's bank>
+EOF
+chmod 600 ~/.hermes/.env
+hermes memory status
+```
+
+Use `https://<host>/api` as the URL if the API is behind a prefix. Restart Hermes's gateway afterwards if it's already running (`hermes gateway restart`).
+
+- **Set `HINDSIGHT_BANK_ID` to the key's bank.** The plugin's default bank is `hermes`, and `hermes memory setup` doesn't ask for one, so without it every request is refused.
+- **`~/.hermes/hindsight/config.json` wins over `.env`.** If an earlier `hermes memory setup` left that file, its mode, URL and key are used instead (the bank in `.env` still applies). Delete the file, or set `api_url` and `bank_id` in it.
+- **Put the key in `.env` yourself.** Don't paste it into a chat and ask the agent to set itself up: the key then goes to the LLM provider and into the agent's saved sessions and memory.
 
 ## Configuration
 
