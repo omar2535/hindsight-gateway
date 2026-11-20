@@ -6,8 +6,9 @@ import urllib.parse
 # No bank needed: harmless, read-only.
 GLOBAL_GET = {"/version", "/v1/version", "/health", "/health/live", "/health/ready", "/v1/bank-template-schema"}
 
-# Health checks need no key (probes).
-HEALTH = {"/health", "/health/live", "/health/ready"}
+# No key needed: health checks (probes), and the version, which Hindsight's UI asks for
+# on its sign-in page, before anyone has a key.
+KEYLESS = {"/health", "/health/live", "/health/ready", "/version", "/v1/version"}
 
 # What a key may do inside its own bank: the first path segment after the bank id.
 # Left out on purpose: aliases, clone, transfer, document-transfer (they link or copy to

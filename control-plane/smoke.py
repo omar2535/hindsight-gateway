@@ -72,6 +72,8 @@ def main(image):
         else:
             raise SystemExit("the UI never came up")
 
+        # The sign-in page asks for it before anyone has a key (gateway 0.3.1+).
+        check(ui("GET", "/api/version")[0] == 200, "version without a session: 200")
         check(ui("GET", "/api/banks")[0] == 401, "no session: 401")
         check(ui("POST", "/api/auth/login", body={"key": "wrong"})[0] == 401, "unknown key: 401")
         status, _, r = ui("POST", "/api/auth/login", body={"key": KEY_A})

@@ -7,7 +7,7 @@ import sys
 import urllib.parse
 from http.server import BaseHTTPRequestHandler
 
-from .policy import BANK_LIST, HEALTH, allowed, special
+from .policy import BANK_LIST, KEYLESS, allowed, special
 
 HOP_BY_HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te",
               "trailer", "transfer-encoding", "upgrade", "host", "authorization", "content-length",
@@ -115,8 +115,8 @@ def make_handler(store, upstream: str, max_body: int = 64 * 1024 * 1024, timeout
             raw_path, sep, query = self.path.partition("?")
             path = strip_prefix(raw_path, prefix)
             target = path + sep + query  # what Hindsight sees: never the prefix
-            if path in HEALTH and self.command == "GET" and not self.headers.get("Authorization"):
-                pass  # probes and plain health checks, no key needed
+            if path in KEYLESS and self.command == "GET" and not self.headers.get("Authorization"):
+                pass  # probes, health checks and the version: no key needed
             else:
                 auth = self.headers.get("Authorization") or ""
                 key = auth[7:].strip() if auth[:7].lower() == "bearer " else ""

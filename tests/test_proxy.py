@@ -88,6 +88,7 @@ class ProxyTest(unittest.TestCase):
         self.assertForwarded("GET", "/v1/version")
         self.assertForwarded("GET", "/v1/bank-template-schema")
         self.assertEqual(self.call("GET", "/health", key=None), 200)  # probes, no key
+        self.assertEqual(self.call("GET", "/version", key=None), 200)  # a UI's sign-in page
 
     def test_authorization_is_not_forwarded(self):
         self.call("GET", A + "/stats")
@@ -192,7 +193,7 @@ class ProxyTest(unittest.TestCase):
         self.assertRefused("GET", A + "/stats", key=None, want=401)
         self.assertRefused("GET", A + "/stats", key="wrong", want=401)
         self.assertRefused("GET", A + "/stats", key="", want=401)
-        self.assertRefused("GET", "/version", key=None, want=401)
+        self.assertRefused("GET", "/v1/bank-template-schema", key=None, want=401)
         status = raw(self.port, f"GET {A}/stats HTTP/1.1\r\nHost: h\r\nAuthorization: Basic {KEY_A}\r\n"
                                 "Connection: close\r\n\r\n")
         self.assertEqual(status, 401)

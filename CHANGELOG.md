@@ -4,6 +4,10 @@ Each release's section here is also its GitHub Release notes.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-20
+
+- `GET /version` and `/v1/version` need no key, like the health checks. Hindsight's UI asks for the version on its sign-in page, before anyone has a key, and showed a "Server Error" there when it was refused.
+
 ## [0.3.0] - 2026-11-20
 
 Enough for Hindsight's control-plane UI to run with one person's key and show only their bank.
@@ -27,7 +31,8 @@ First release, moved out of [Hermify](https://github.com/omar2535/Hermify) (wher
 - An admin UI to create, rename, move, disable, rotate and delete keys, with an activity log.
 - A container image for amd64 and arm64.
 
-[Unreleased]: https://github.com/omar2535/hindsight-gateway/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/omar2535/hindsight-gateway/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/omar2535/hindsight-gateway/releases/tag/v0.3.1
 [0.3.0]: https://github.com/omar2535/hindsight-gateway/releases/tag/v0.3.0
 [0.2.0]: https://github.com/omar2535/hindsight-gateway/releases/tag/v0.2.0
 [0.1.0]: https://github.com/omar2535/hindsight-gateway/releases/tag/v0.1.0
