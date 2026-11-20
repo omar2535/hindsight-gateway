@@ -7,7 +7,7 @@ import sys
 import urllib.parse
 from http.server import BaseHTTPRequestHandler
 
-from .policy import HEALTH, allowed
+from .policy import BANK_LIST, HEALTH, allowed, special
 
 HOP_BY_HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te",
               "trailer", "transfer-encoding", "upgrade", "host", "authorization", "content-length",
@@ -20,6 +20,13 @@ def strip_prefix(path: str, prefix: str) -> str:
     if prefix and (path == prefix or path.startswith(prefix + "/")):
         return path[len(prefix):] or "/"
     return path
+
+
+def _int(args: dict, name: str, default: int) -> int:
+    try:
+        return max(0, int((args.get(name) or [default])[0]))
+    except ValueError:
+        return default
 
 
 def make_handler(store, upstream: str, max_body: int = 64 * 1024 * 1024, timeout: float = 600, prefix: str = ""):
@@ -58,6 +65,52 @@ def make_handler(store, upstream: str, max_body: int = 64 * 1024 * 1024, timeout
                 return None
             return self.rfile.read(length) if length else b""
 
+        def _scoped(self, kind: str, path: str, query: str, name: str, bank: str):
+            """Global reads answered for one bank: the bank list (just the key's bank) and
+            chunk lookups (only chunks in the key's bank). Buffered: both are small JSON."""
+            if self._read_body() is None:
+                self.close_connection = True
+                return self._reply(413, "Hindsight gateway: request body too large")
+            args = urllib.parse.parse_qs(query)
+            if kind == "banks":
+                # q matches bank ids and names as substrings; the exact id is filtered below.
+                target = BANK_LIST + "?" + urllib.parse.urlencode({"q": bank, "limit": 1000})
+            else:
+                target = path + ("?" + query if query else "")
+            conn = http.client.HTTPConnection(up.hostname, up.port or 80, timeout=timeout)
+            try:
+                conn.request("GET", target, headers={"Host": up.netloc, "Accept": "application/json"})
+                resp = conn.getresponse()
+                data = resp.read()
+            except (OSError, http.client.HTTPException) as e:
+                self.close_connection = True
+                return self._reply(502, f"Hindsight gateway: upstream error ({type(e).__name__})")
+            finally:
+                conn.close()
+            if resp.status != 200:
+                return self._send(resp.status, resp.getheader("Content-Type") or "application/json", data)
+            try:
+                doc = json.loads(data)
+            except ValueError:
+                return self._reply(502, "Hindsight gateway: unexpected answer from Hindsight")
+            if kind == "banks":
+                search = (args.get("q") or [""])[0].lower()
+                mine = [b for b in (doc.get("banks") or []) if isinstance(b, dict) and b.get("bank_id") == bank
+                        and (search in bank.lower() or search in str(b.get("name") or "").lower())]
+                limit, offset = _int(args, "limit", 100), _int(args, "offset", 0)
+                doc = {"banks": mine[offset:offset + limit], "total": len(mine), "limit": limit, "offset": offset}
+            elif not isinstance(doc, dict) or doc.get("bank_id") != bank:
+                self.log_message("denied %s %s (key %s, bank %s)", self.command, path, name, bank)
+                return self._reply(404, "Chunk not found")
+            return self._send(200, "application/json", json.dumps(doc).encode())
+
+        def _send(self, code: int, content_type: str, body: bytes):
+            self.send_response(code)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
         def _handle(self):
             raw_path, sep, query = self.path.partition("?")
             path = strip_prefix(raw_path, prefix)
@@ -76,6 +129,9 @@ def make_handler(store, upstream: str, max_body: int = 64 * 1024 * 1024, timeout
                     self.log_message("denied %s %s (key %s, bank %s)", self.command, path, name, bank)
                     self.close_connection = True
                     return self._reply(403, "Hindsight gateway: not allowed for this key")
+                kind = special(self.command, path)
+                if kind:
+                    return self._scoped(kind, path, query, name, bank)
 
             body = self._read_body()
             if body is None:

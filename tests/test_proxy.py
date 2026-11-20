@@ -137,7 +137,7 @@ class ProxyTest(unittest.TestCase):
 
     def test_cross_bank_and_global_endpoints_refused(self):
         for m, path in [
-            ("GET", "/v1/default/banks"),
+            ("DELETE", A),
             ("POST", A + "/aliases"), ("GET", A + "/aliases"), ("PATCH", A + "/aliases/x"),
             ("POST", A + "/clone?target_bank_id=hermes-bob"),
             ("POST", A + "/transfer/export"), ("POST", A + "/transfer/import?target_bank_id=hermes-bob"),
@@ -145,11 +145,46 @@ class ProxyTest(unittest.TestCase):
             ("POST", A + "/webhooks"), ("GET", A + "/webhooks"),
             ("PATCH", A + "/config"), ("DELETE", A + "/config"),
             ("GET", A + "/something-new-in-a-future-hindsight"),
-            ("GET", "/v1/default/chunks/abc"), ("GET", "/v1/default/files/download/abc"),
+            ("GET", "/v1/default/files/download/abc"),
+            ("GET", "/v1/default/files/download/banks/hermes-bob/exports/u/transfer.zip"),
+            ("GET", "/v1/default/files/download/tenants/public/banks/hermes-bob/exports/u/t.zip"),
+            ("GET", "/v1/default/files/download/banks/hermes-alice%2F..%2Fhermes-bob/x/t.zip"),
+            ("GET", "/v1/default/files/download/banks/HERMES-ALICE/x/t.zip"),
+            ("GET", "/v1/default/chunks/"), ("POST", "/v1/default/banks"),
             ("GET", "/metrics"), ("GET", "/openapi.json"), ("GET", "/docs"),
             ("POST", "/mcp"), ("GET", "/mcp/"),
         ]:
             self.assertRefused(m, path, body={} if m in ("POST", "PATCH") else None)
+
+    # --- global reads the gateway scopes to the key's bank
+
+    def test_bank_list_shows_only_own_bank(self):
+        status, data, _ = request(self.port, "GET", "/v1/default/banks?limit=50",
+                                  {"Authorization": f"Bearer {KEY_A}"})
+        self.assertEqual(status, 200)
+        doc = json.loads(data)
+        self.assertEqual([b["bank_id"] for b in doc["banks"]], ["hermes-alice"])
+        self.assertEqual((doc["total"], doc["limit"], doc["offset"]), (1, 50, 0))
+        # Hindsight was asked for the key's bank, not for whatever the client searched.
+        self.assertIn("q=hermes-alice", FakeHindsight.seen[-1]["path"])
+        _, data, _ = request(self.port, "GET", "/v1/default/banks?q=bob", {"Authorization": f"Bearer {KEY_A}"})
+        self.assertEqual(json.loads(data)["banks"], [])
+        _, data, _ = request(self.port, "GET", "/v1/default/banks?offset=1", {"Authorization": f"Bearer {KEY_A}"})
+        self.assertEqual(json.loads(data)["banks"], [])
+
+    def test_chunk_only_from_own_bank(self):
+        status, data, _ = request(self.port, "GET", "/v1/default/chunks/hermes-alice__0",
+                                  {"Authorization": f"Bearer {KEY_A}"})
+        self.assertEqual((status, json.loads(data)["bank_id"]), (200, "hermes-alice"))
+        status, data, _ = request(self.port, "GET", "/v1/default/chunks/hermes-bob__0",
+                                  {"Authorization": f"Bearer {KEY_A}"})
+        self.assertEqual(status, 404)
+        self.assertNotIn(b"hermes-bob", data)
+        self.assertEqual(self.call("GET", "/v1/default/chunks/missing"), 404)
+
+    def test_own_export_download(self):
+        self.assertForwarded("GET", "/v1/default/files/download/banks/hermes-alice/exports/u/transfer.zip")
+        self.assertForwarded("GET", "/v1/default/files/download/tenants/public/banks/hermes-alice/exports/u/t.zip")
 
     # --- keys
 

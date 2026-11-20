@@ -53,13 +53,16 @@ class PrefixTest(unittest.TestCase):
         self.assertEqual(FakeHindsight.seen[-1]["path"], A + "/stats?x=1")
         self.assertEqual(self.api("/api/version"), 200)
         self.assertEqual(FakeHindsight.seen[-1]["path"], "/version")
+        # The scoped bank list works under the prefix too.
+        self.assertEqual(self.api("/api/v1/default/banks"), 200)
+        self.assertTrue(FakeHindsight.seen[-1]["path"].startswith("/v1/default/banks?q="))
 
     def test_bare_paths_still_work(self):
         self.assertEqual(self.api(A + "/stats"), 200)
         self.assertEqual(FakeHindsight.seen[-1]["path"], A + "/stats")
 
     def test_prefix_does_not_open_anything(self):
-        for path in ["/api/v1/default/banks/hermes-bob/stats", "/api/v1/default/banks",
+        for path in ["/api/v1/default/banks/hermes-bob/stats",
                      "/api/../v1/default/banks/hermes-bob/stats", "/api//v1/default/banks/hermes-alice/stats",
                      "/api/api" + A + "/stats", "/apiv1/default/banks/hermes-alice/stats"]:
             self.assertIn(self.api(path), (403, 404), path)

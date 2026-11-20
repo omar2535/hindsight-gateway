@@ -63,8 +63,22 @@ class FakeHindsight(BaseHTTPRequestHandler):
             self.wfile.write(b"data: one\n\ndata: two\n\n")
             self.close_connection = True
             return
-        if self.path == "/v1/default/banks":
-            out = json.dumps({"banks": [{"bank_id": b} for b in self.banks]}).encode()
+        path = self.path.partition("?")[0]
+        if path == "/v1/default/banks":
+            out = json.dumps({"banks": [{"bank_id": b, "name": b} for b in self.banks],
+                              "total": len(self.banks), "limit": 100, "offset": 0}).encode()
+        elif path == "/v1/default/chunks/missing":
+            out = b'{"detail": "Chunk not found"}'
+            self.send_response(404)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+            return
+        elif path.startswith("/v1/default/chunks/"):
+            # Chunk ids here are "<bank>__<n>".
+            chunk = path.rsplit("/", 1)[1]
+            out = json.dumps({"chunk_id": chunk, "bank_id": chunk.split("__")[0], "chunk_text": "t"}).encode()
         else:
             out = json.dumps({"ok": True, "path": self.path}).encode()
         self.send_response(200)
