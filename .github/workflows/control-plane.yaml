@@ -1,0 +1,111 @@
+# ghcr.io/<owner>/hindsight-ui:<hindsight version>: Hindsight's control-plane UI with
+# control-plane/api-key-mode.patch. Daily, it builds the latest Hindsight release if that tag
+# isn't published yet. A change to the patch rebuilds (and replaces) the latest version's
+# tag. If the patch no longer applies, or the smoke test fails, nothing is pushed and the run
+# fails (GitHub emails the owner): update the patch, then re-run.
+name: Control-plane UI image
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Hindsight version to build (default the latest release)
+        required: false
+      force:
+        description: Rebuild even if the tag exists
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths: ["control-plane/**", ".github/workflows/control-plane.yaml"]
+  pull_request:
+    paths: ["control-plane/**", ".github/workflows/control-plane.yaml"]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: control-plane-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      build: ${{ steps.plan.outputs.build }}
+      push: ${{ steps.plan.outputs.push }}
+      image: ${{ steps.plan.outputs.image }}
+    steps:
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          v=${INPUT_VERSION:-$(gh release view -R vectorize-io/hindsight --json tagName -q .tagName)}
+          v=${v#v}
+          image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/hindsight-ui
+          exists=false
+          docker manifest inspect "$image:$v" >/dev/null 2>&1 && exists=true
+          build=true push=true
+          case "$GITHUB_EVENT_NAME" in
+            pull_request) push=false ;;
+            schedule) [ "$exists" = true ] && build=false ;;
+            workflow_dispatch) [ "$exists" = true ] && [ "$FORCE" != true ] && build=false ;;
+          esac
+          echo "Hindsight $v, $image:$v exists: $exists, build: $build, push: $push"
+          { echo "version=$v"; echo "build=$build"; echo "push=$push"; echo "image=$image"; } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    strategy:
+      matrix:
+        include:
+          - {arch: amd64, runner: ubuntu-latest}
+          - {arch: arm64, runner: ubuntu-24.04-arm}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: docker/setup-buildx-action@v3
+      - name: Build (patch must apply)
+        run: control-plane/build.sh "${{ needs.plan.outputs.version }}" hindsight-ui:ci --load
+      - name: Smoke test (each key sees only its bank)
+        run: PYTHONPATH=.:tests python control-plane/smoke.py hindsight-ui:ci
+      - uses: docker/login-action@v3
+        if: needs.plan.outputs.push == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push ${{ matrix.arch }}
+        if: needs.plan.outputs.push == 'true'
+        run: |
+          ref="${{ needs.plan.outputs.image }}:${{ needs.plan.outputs.version }}-${{ matrix.arch }}"
+          docker tag hindsight-ui:ci "$ref"
+          docker push "$ref"
+
+  publish:
+    needs: [plan, build]
+    if: needs.plan.outputs.push == 'true' && needs.plan.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: One tag for both architectures
+        run: |
+          i="${{ needs.plan.outputs.image }}" v="${{ needs.plan.outputs.version }}"
+          docker buildx imagetools create -t "$i:$v" "$i:$v-amd64" "$i:$v-arm64"
+          docker buildx imagetools inspect "$i:$v"

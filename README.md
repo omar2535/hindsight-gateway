@@ -2,7 +2,9 @@
 
 Per-bank API keys for [Hindsight](https://github.com/vectorize-io/hindsight), with a small web UI to manage them.
 
-Hindsight's API has no authentication of its own: anything that can reach it can read or change any memory bank. This gateway sits in front of it. Each API key opens exactly one bank, and everything else is refused: other banks, the bank list, aliases, clones, transfers between banks, webhooks, global chunk and file lookups, and bank config changes. Endpoints Hindsight adds later stay blocked until the gateway allows them.
+Hindsight's API has no authentication of its own: anything that can reach it can read or change any memory bank. This gateway sits in front of it. Each API key opens exactly one bank, and everything else is refused: other banks, deleting a whole bank, aliases, clones, transfers between banks, webhooks and bank config changes. The global reads a dashboard needs are scoped to the key's bank: the bank list shows only that bank, a chunk lookup answers only for its chunks, and an export download only for its archives. Endpoints Hindsight adds later stay blocked until the gateway allows them.
+
+Because of that, Hindsight's own control-plane UI can run against the gateway with one person's key and show only that person's bank (Hermify does this with a patched UI that signs each person in with their own key).
 
 I wrote it for [Hermify](https://github.com/omar2535/Hermify), where several people's agents share one Hindsight, but it works in front of any Hindsight.
 
@@ -81,6 +83,24 @@ Use `https://<host>/api` as the URL if the API is behind a prefix. Restart Herme
 - A seed you rotated, renamed or deleted in the UI is never imported again.
 - The bank and enabled/disabled state you set in the UI always win.
 
+## A Hindsight UI for each person
+
+`ghcr.io/omar2535/hindsight-ui:<hindsight version>` is Hindsight's own control-plane UI (every tab: Home with its graph, Memories, Recall, Reflect, Documents, Entities, Mental models...) with a small patch, [`control-plane/api-key-mode.patch`](control-plane/api-key-mode.patch). With `HINDSIGHT_CP_AUTH_MODE=api-key`, each person signs in with their own gateway key, and every call the UI makes for them carries that key. Point it at the gateway, and each person sees only their own bank.
+
+```sh
+docker run -d -p 9999:9999 \
+  -e HINDSIGHT_CP_AUTH_MODE=api-key \
+  -e HINDSIGHT_CP_DATAPLANE_API_URL=http://<gateway>:8889 \
+  -e HINDSIGHT_CP_ACCESS_KEY="$(openssl rand -hex 32)" \
+  ghcr.io/omar2535/hindsight-ui:1.2.1
+```
+
+- **Never point it at Hindsight itself.** Hindsight's API accepts any key, so everyone would see every bank. The gateway is what limits each key to one bank.
+- `HINDSIGHT_CP_ACCESS_KEY` isn't a login here: it seals the session cookie (AES-GCM), which holds the person's key. Changing it signs everyone out. Sessions last 30 days; disabling a key in the gateway makes its session useless at once (every call gets 401).
+- Without a session, the UI sends no key at all (`HINDSIGHT_CP_DATAPLANE_API_KEY` is ignored), so the gateway refuses the call.
+- Give each person a key of their own for the UI, separate from their agent's, so either can be revoked alone. The UI can't delete the bank or change its config: the gateway refuses both.
+- The patch adds three files and changes 14 lines in three others; all of the UI's dataplane calls get the key from one `fetch` wrapper installed at startup, so new upstream pages need no change. The image is tagged with the Hindsight version it's built from. A workflow builds each new Hindsight release daily, runs the smoke test (`control-plane/smoke.py`: one key, one bank) and pushes; if the patch stops applying, nothing is pushed.
+
 ## Security
 
 - Keys are only ever stored as hashes, and never logged. The log records method, path (without the query string) and status, and names the key behind each refused request.
@@ -96,6 +116,8 @@ PYTHONPATH=. python3 -m unittest discover -s tests -t tests
 ```
 
 The tests run a fake Hindsight that records every request, so they check that refused requests never reach it. To release, bump `__version__` in `hindsight_gateway/__init__.py`, add a [CHANGELOG](CHANGELOG.md) section, and push a `v<version>` tag. The Release workflow builds the image for amd64 and arm64 and pushes it to `ghcr.io/omar2535/hindsight-gateway`.
+
+The per-person UI image (above) is built by the Control-plane UI workflow, not by releases: `control-plane/build.sh <hindsight version> <tag> --load`, then `PYTHONPATH=.:tests python3 control-plane/smoke.py <tag>`.
 
 ## License
 
